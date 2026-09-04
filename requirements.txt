@@ -1,0 +1,26 @@
+# Python runtime dependencies, pinned to the versions this system is developed
+# and tested against. The C++ services get their dependencies from CMake and the
+# vendored dependency/ tree instead -- nothing here affects them.
+#
+#   pip install -r requirements.txt
+#
+# grpcio/protobuf must stay compatible with the protoc that generated the stubs
+# in services/*/services_pb2*.py (protoc 31.1). Regenerate the stubs after
+# changing either -- see README.md.
+
+grpcio==1.64.1
+protobuf==6.33.6
+
+# tracking: ByteTrack association (scipy for the Hungarian assignment)
+numpy==1.26.4
+scipy==1.13.1
+
+# ingest/display frame handling and JPEG encode
+opencv-python==4.10.0
+
+# display_service: FastAPI app, MJPEG streaming, dashboard
+fastapi==0.118.0
+uvicorn==0.34.0
+
+# /metrics endpoint for the Python services (tracking :9103, display :8088)
+prometheus-client==0.20.0

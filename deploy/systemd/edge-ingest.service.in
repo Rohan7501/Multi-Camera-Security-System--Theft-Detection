@@ -1,0 +1,26 @@
+# systemd USER unit — install to ~/.config/systemd/user/edge-ingest.service
+# C++ service (OpenCV RTSP capture + gRPC client). No ONNX -> no CUDA/TensorRT libs.
+# The control service owns EnvironmentFile (FleetController.configure renders it);
+# systemd owns supervision, ordering, restart-on-crash.
+
+[Unit]
+Description=edge-ai ingest service
+After=network-online.target
+Wants=network-online.target
+# Ingest is the gRPC CLIENT: start it after the inference server it dials.
+After=edge-inference.service
+
+[Service]
+Type=simple
+# Same user across ALL edge units (shm segment is 0600; see edge-tracking.service).
+# User=rohan
+# Group=rohan
+WorkingDirectory=@SEC_SYS_ROOT_DIR@
+# Launch-time config, rendered by the control service:
+EnvironmentFile=@EDGE_AI_ETC@/ingest.env
+ExecStart=@SEC_SYS_ROOT_DIR@/build/services/ingest_service/ingest_service
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

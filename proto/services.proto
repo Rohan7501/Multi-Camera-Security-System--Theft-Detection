@@ -1,0 +1,107 @@
+syntax = "proto3";
+
+package inference;
+
+message grpcAck { bool ok = 1; }   // tiny reply for fire-and-forward RPCs
+
+// Pixels inlined on a gRPC hop. Present only when pixels actually travel over
+// gRPC; in shm mode consumers fetch pixels from the shared-memory ring by
+// (gStreamId, gFrameId) instead and this message is absent (has_ginline()/
+// HasField("gInline") == false).
+message grpcInlineFrame {
+  uint32 gWidth    = 1;
+  uint32 gHeight   = 2;
+  uint32 gChannels = 3;
+  bytes  gData     = 4;   // raw BGR, gHeight * gWidth * gChannels bytes
+}
+
+message grpcFrameRequest {
+  string gStreamId    = 1;
+  uint64 gFrameId     = 2;
+  int64  gTimestampNs = 3;
+  reserved 4, 5, 6, 7;                    // retired flat pixel fields
+  reserved "gWidth", "gHeight", "gChannels", "gData";
+  grpcInlineFrame gInline = 8;            // absent => pixels are in the shm ring
+  // Set ONCE by ingest at the RTSP read and NEVER re-stamped, unlike
+  // gTimestampNs (which each hop overwrites with its own receipt time to measure
+  // that one segment). This is what makes true end-to-end frame age possible.
+  // Same steady_clock (CLOCK_MONOTONIC) epoch -- valid on one box only.
+  int64 gCaptureTimestampNs = 9;
+}
+
+message grpcDetection {
+  float  gX1 = 1;
+  float  gY1 = 2;
+  float  gX2 = 3;
+  float  gY2 = 4;
+  float  gConfidence = 5;
+  int32  gClassId    = 6;   // 0=Product 1=Product-Picked 2=Regular 3=Shoplifting
+  string gLabel      = 7;   // optional, display only
+  int32  gTrackId    = 8;   // -1 until tracking assigns one
+}
+
+message grpcDetectionResponse {
+  string gStreamId = 1;
+  uint64 gFrameId  = 2;
+  int64  gTimestampNs = 3;          // carry time forward for tracking/alerting
+  repeated grpcDetection gDetections = 4;
+  reserved 5, 6, 7, 8;                    // retired flat pixel fields
+  reserved "gWidth", "gHeight", "gChannels", "gData";
+  // Present only when the tracker consumes pixels AND transport is grpc
+  // (no shm ring to read from). See detection_writer.hpp / TRACKING_PIXELS.
+  grpcInlineFrame gInline = 9;
+  // Carried through UNCHANGED from grpcFrameRequest: ingest's capture instant.
+  // gTimestampNs above is re-stamped per hop; this one is not, so tracking can
+  // compute how old a frame is when it (or an alert) is finally handled.
+  int64 gCaptureTimestampNs = 10;
+}
+
+// Ingest -> Inference : push frames, no detections returned to ingest (forward flow)
+service InferenceService {
+  rpc grpcStreamFrames(stream grpcFrameRequest) returns (grpcAck);
+}
+
+// Inference -> Tracking : push detections forward; tracking fills in gTrackId
+service TrackingService {
+  rpc grpcStreamDetections(stream grpcDetectionResponse) returns (grpcAck);
+}
+
+// ---- Ingest control plane (control_service -> ingest_service) ----
+// RUNTIME camera management on a *running* ingest: add / stop / start a single
+// stream without restarting the process (Bucket B, "must not require a restart").
+// Lifecycle (start/stop the ingest process) and launch-time config (addresses,
+// transport) are deliberately NOT here -- those are the process manager's job
+// (systemd/compose), applied by re-launch. See control_service/lifecycle.py.
+
+message ingestCamera {
+  string gStreamId = 1;
+  string gUrl      = 2;
+}
+
+message ingestStreamId { string gStreamId = 1; }
+message ingestEmpty {}
+
+message ingestAdminReply {
+  bool   ok      = 1;
+  string message = 2;   // human-readable reason on failure
+}
+
+message ingestCameraStatus {
+  string gStreamId      = 1;
+  string gUrl           = 2;
+  bool   gRunning       = 3;   // true = an RtspReader is active for this stream
+  double gFps           = 4;
+  uint64 gFramesTotal   = 5;
+  uint64 gReconnects    = 6;
+  int64  gLastFrameTsMs = 7;
+}
+
+message ingestCameraList { repeated ingestCameraStatus gCameras = 1; }
+
+service IngestAdmin {
+  rpc AddCamera   (ingestCamera)   returns (ingestAdminReply);   // register + start a stream
+  rpc StartStream (ingestStreamId) returns (ingestAdminReply);   // (re)start a known, stopped stream
+  rpc StopStream  (ingestStreamId) returns (ingestAdminReply);   // stop one stream, leave the rest
+  rpc RemoveCamera(ingestStreamId) returns (ingestAdminReply);   // stop + forget
+  rpc ListCameras (ingestEmpty)    returns (ingestCameraList);   // status of all known cameras
+}

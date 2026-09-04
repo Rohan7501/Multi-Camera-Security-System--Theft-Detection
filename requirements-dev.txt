@@ -1,0 +1,8 @@
+# Development-only tooling: linting and tests. Not needed to run the pipeline.
+#
+#   pip install -r requirements.txt -r requirements-dev.txt
+
+-r requirements.txt
+
+pytest==8.3.4
+ruff==0.9.2

@@ -1,0 +1,24 @@
+# systemd USER unit — install to ~/.config/systemd/user/edge-display.service
+# The display service is the FRONT DOOR: it serves the dashboard and drives the
+# pipeline units via POST /start-up. LIFECYCLE_BACKEND=systemd-user (in the env
+# file) makes /start-up call `systemctl --user`, matching where these units live.
+#
+# It does NOT depend on the pipeline units: it runs standalone and shows
+# placeholders until frames arrive, so start it first, then click "Start system".
+
+[Unit]
+Description=edge-ai display service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# No User=/Group=: --user units already run as the invoking user (shm 0600 owner).
+WorkingDirectory=@SEC_SYS_ROOT_DIR@/services/display_service
+EnvironmentFile=@EDGE_AI_ETC@/display.env
+ExecStart=/usr/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port 8088
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

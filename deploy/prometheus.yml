@@ -1,0 +1,38 @@
+# Prometheus scrape config for the edge-ai fleet.
+#   dependency/prometheus-3.13.2.linux-amd64/prometheus --config.file=deploy/prometheus.yml
+# (or scripts/run_prometheus.sh, which also sets a sane retention for an edge box)
+#
+# Each target is a service's /metrics HTTP listener -- SEPARATE from its gRPC
+# port, because gRPC speaks HTTP/2+protobuf and cannot answer a scrape:
+#
+#   service     gRPC        metrics
+#   ingest      :50053      :9101     (admin RPC / scrape)
+#   inference   :50051      :9102
+#   tracking    :50052      :9103
+#   display     --          :8088     (the FastAPI app itself)
+#
+# Prometheus adds `up{job,instance}` per target for free -- that is your
+# liveness signal, no health endpoint needed.
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  external_labels:
+    site: edge-lab            # set per store/box when you run more than one
+
+scrape_configs:
+  - job_name: edge-ai
+    static_configs:
+      - targets: ['localhost:9101']
+        labels: {service: ingest}
+      - targets: ['localhost:9102']
+        labels: {service: inference}
+      - targets: ['localhost:9103']
+        labels: {service: tracking}
+      - targets: ['localhost:8088']
+        labels: {service: display}
+
+  # Prometheus scraping itself -- useful for spotting scrape overload.
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']

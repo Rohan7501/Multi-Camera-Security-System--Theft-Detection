@@ -1,0 +1,41 @@
+# build app
+/build
+
+# dependencies
+/dependency/*
+
+# skeleton
+/docker/*
+/common/config
+/common/logging
+/common/utils
+
+# trt engine
+/trt_cache
+
+# vscode
+.vscode
+
+# models
+/models
+
+# proto files
+/proto/*
+!/proto/*.proto
+
+# vendored MediaMTX release 
+/rtsp_server/*
+
+# control service
+/services/control_service/env
+/services/control_service/units
+
+# Misc
+*.md
+!/README.md
+*pycache*
+/data
+!/rtsp_server/README.md
+
+# rendered systemd env files (generated from deploy/env/*.in)
+/deploy/rendered

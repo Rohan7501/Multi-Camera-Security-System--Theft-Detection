@@ -1,0 +1,17 @@
+cameras:
+  - id: cam1
+    url: rtsp://localhost:8554/cam1
+  - id: cam2
+    url: rtsp://localhost:8554/cam2
+  - id: cam3
+    url: rtsp://localhost:8554/cam3
+  - id: cam4
+    url: rtsp://localhost:8554/cam4
+  - id: cam5
+    url: rtsp://localhost:8554/cam5
+  - id: cam6
+    url: rtsp://localhost:8554/cam6
+  - id: cam7
+    url: rtsp://localhost:8554/cam7
+  - id: cam8
+    url: rtsp://localhost:8554/cam8
