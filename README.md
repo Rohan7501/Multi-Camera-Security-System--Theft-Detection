@@ -114,19 +114,57 @@ pip install -r requirements.txt          # runtime
 pip install -r requirements-dev.txt      # + pytest and ruff
 ```
 
+### Prerequisites
+
+These are the **only** commands in the bring-up that need `sudo` —
+`scripts/install_dependencies.sh` deliberately contains none, so it can run unprivileged and installs
+everything either into `dependency/` or into `~/.local`. Run these by hand first:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+    build-essential cmake git pkg-config \
+    autoconf libtool \
+    zlib1g-dev libssl-dev \
+    curl ca-certificates
+```
+
+`zlib1g-dev` is required — prometheus-cpp's `ENABLE_COMPRESSION` defaults on and does
+`find_package(ZLIB REQUIRED)`. OpenCV is expected to already be installed at
+`/usr/local/lib/cmake/opencv4`.
+
+> **Do not `sudo apt install protobuf-compiler`.** `protoc` comes from the gRPC build below, matched to
+> protobuf 31.1. Ubuntu 22.04 ships protoc 3.12 and JetPack 5 ships 3.6; neither can read code
+> generated against protobuf 31. If a distro `protoc` is already present, make sure `~/.local/bin`
+> precedes `/usr/bin` on your `PATH`.
+
 ### Fetching the dependencies
 
-`dependency/` and `models/` are **gitignored** — a fresh clone has neither. Build gRPC and yaml-cpp
-with the helper, and download the CUDA/cuDNN/TensorRT/ONNX Runtime tarballs from NVIDIA and
-Microsoft into `dependency/` using the exact version directory names in the table above:
+`dependency/` and `models/` are **gitignored** — a fresh clone has neither. The helper clones, builds
+and installs the three source dependencies — yaml-cpp, gRPC (with protoc) and prometheus-cpp:
 
 ```bash
 export SEC_SYS_ROOT_DIR=$PWD
-scripts/install_dependencies.sh          # clones + builds yaml-cpp and gRPC v1.78.1 into ~/.local
+scripts/install_dependencies.sh
 ```
 
+| Env | Effect |
+|---|---|
+| `SEC_SYS_ROOT_DIR` | **required** — repo root; the script exits if unset |
+| `JOBS` | parallel compile jobs (default: ~1 per 2 GB of RAM, capped at `nproc`) |
+| `FORCE=1` | rebuild dependencies that are already installed |
+
+Each step short-circuits on its installed-config marker, so a re-run after a failure resumes rather
+than rebuilding gRPC from scratch.
+
+The prebuilt GPU stack is **not** covered by the script — download the CUDA/cuDNN/TensorRT tarballs
+from NVIDIA and the ONNX Runtime tarball from Microsoft into `dependency/` by hand, using the exact
+version directory names in the table above. On aarch64 note that Microsoft's release tarball is
+CPU-only; GPU inference on Jetson needs ONNX Runtime built from source with `--use_tensorrt`.
+
 prometheus-cpp must be **installed to a prefix**, not consumed from its build tree — the config in
-`_build/` computes its prefix as if installed and misresolves:
+`_build/` computes its prefix as if installed and misresolves. The script does this for you; to redo
+it after rebuilding the library:
 
 ```bash
 cmake --install dependency/prometheus-cpp/_build --prefix dependency/prometheus-cpp/_install

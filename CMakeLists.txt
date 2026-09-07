@@ -39,6 +39,26 @@ if(ENABLE_UBSAN)
     add_link_options(-fsanitize=undefined)
 endif()
 
+# ---- Dependency prefixes ----
+# yaml-cpp is sandboxed under dependency/ so provisioning a machine needs no
+# sudo. gRPC stays in a shared user prefix (~/.local): its build is ~4.5 GB and
+# over an hour, which is not worth duplicating per checkout.
+#
+# Both are resolved via CMAKE_PREFIX_PATH rather than the
+# find_package(... PATHS <p> NO_DEFAULT_PATH) form used for prometheus-cpp
+# below, because gRPC's config resolves its own transitive dependencies --
+# absl, protobuf, c-ares, re2, utf8_range -- and NO_DEFAULT_PATH does not
+# propagate into those nested find_dependency() calls.
+#
+# Setting them here is what lets `cmake -S . -B build` work with no
+# -DCMAKE_PREFIX_PATH flag on the command line.
+set(YAML_CPP_ROOT "${CMAKE_SOURCE_DIR}/dependency/yaml-cpp/_install"
+    CACHE PATH "yaml-cpp install prefix")
+set(GRPC_ROOT "$ENV{HOME}/.local"
+    CACHE PATH "gRPC + protobuf + protoc install prefix")
+
+list(PREPEND CMAKE_PREFIX_PATH "${YAML_CPP_ROOT}" "${GRPC_ROOT}")
+
 # ---- Dependencies ----
 find_package(Protobuf REQUIRED)
 find_package(gRPC REQUIRED)
