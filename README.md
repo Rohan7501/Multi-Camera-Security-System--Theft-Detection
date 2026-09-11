@@ -13,7 +13,7 @@ display, control) handle tracking, alerting, the UI and fleet lifecycle.
 
 ![System architecture](System.png)
 
-Cameras land on **ingest**, which decodes RTSP and publishes raw BGR frames into a **shared-memory
+<!-- Cameras land on **ingest**, which decodes RTSP and publishes raw BGR frames into a **shared-memory
 ring buffer**, sending only a lightweight reference over gRPC. **Inference** pops those references
 from a bounded frame queue, fetches the pixels from the ring, and runs YOLOv8 through ONNX Runtime
 on a pool of worker threads sharing one session. Detections are pushed forward over gRPC to
@@ -29,7 +29,87 @@ them in place by `(stream_id, frame_id)`. gRPC carries references, not images. A
 
 **The flow is one-directional.** Nothing returns to ingest. Each stage pushes forward and forgets,
 so a slow or dead consumer can never apply backpressure to camera capture — the ring laps and the
-newest frames win.
+newest frames win. -->
+
+The system has a micro-service architecture — see the `Services` table below.
+
+### Working/High Level Data Flow
+
+**Ingest** pulls the RTSP cameras listed in `config.yaml` and publishes each frame into a shared-memory
+ring. **Inference** runs YOLOv8 over those frames and pushes detections forward. **Tracking** turns
+detections into track IDs, scores each track for suspicion, and raises alerts. **Display** reads frames
+and detections back out of shared memory and serves the annotated video wall. **Control** starts and stops
+the fleet.
+
+Two properties shape everything else:
+
+- **Pixels move once.** Frames go into the ring; the gRPC hops between services carry only metadata.
+- **The flow is one-directional.** Nothing returns to ingest — each stage pushes forward and forgets, so a
+  slow or dead consumer drops frames instead of stalling camera capture.
+
+### Detailed Data Flow
+
+**Ingest** spawns one `RtspReader` thread per stream and downscales every frame to fit 640×640 (the
+detector's input size) before publishing it through a `FrameWriter` — the same already-resized pixels on
+either transport, so inference sees identical coordinates. All readers share **one** gRPC channel to
+`INFERENCE_ADDR`, but each opens its **own** client-streaming `grpcStreamFrames` RPC. Under `shm` the
+pixels go to the ring and the RPC carries metadata only; under `grpc` they ride inline in the same message.
+Ingest also runs an **`IngestAdmin`** gRPC server, so cameras can be added, started, stopped and removed on
+a *running* ingest with no restart.
+
+**Inference** is a server, a worker pool and a detector. The server accepts the frame RPCs and pushes each
+onto one shared `FrameQueue` (bounded at 400, drop-oldest). Four worker threads pop from it, fetch the
+pixels (from the ring or from the message), run the shared ONNX/YOLOv8 detector, and forward detections
+plus frame metadata to tracking over a client-streaming RPC that **self-heals** — it reopens with capped
+backoff if tracking restarts, losing only the frames sent while it was unreachable. The detector selects
+its execution provider at load time: TensorRT → CUDA → CPU.
+
+**Tracking** assigns track IDs, then runs each track through an EWMA suspicion score with hysteresis and a
+sustain window to produce alerts. It keeps one tracker per `stream_id` behind an algorithm-agnostic
+`Tracker` interface whose input carries pixels optionally, so image-based and motion-only algorithms both
+drop in. The default is **ByteTrack**, which is IoU/Kalman only and ignores pixels — which is why
+`TRACKING_PIXELS` defaults to `0`.
+
+**Alerting** is a *library*, not a service: tracking imports `AlertEngine` from `event_service` and runs it
+in-process, so a detection becomes an alert with no extra network hop. Alerts land in JSON and SQLite under
+`EVENT_DATA_DIR`.
+
+**Control** never forks or execs anything. It renders each service's launch-time config into an env file
+and delegates the lifecycle to the process manager (`systemctl --user`), which leaves restart semantics and
+log capture owned by systemd. It spans two planes: **lifecycle** (start/stop/restart + launch-time config,
+via a `LifecycleBackend`) and **runtime** (camera add/start/stop on a live ingest, via `IngestAdminClient`; not added on display-service yet).
+`SystemdBackend` and `ComposeBackend`(implementation in progress) both sit behind that one interface.
+
+### Design Choices
+
+**Frame transport** — a frame is copied into `/dev/shm` once and every consumer reads it in place by
+`(stream_id, frame_id)`. The inline-gRPC path is **partially implemented** and needs further work.
+
+**Torn-read safety** — each ring slot carries a seqlock, so a reader can never observe a half-written
+frame. The segment holds 16 streams × 240 slots.
+
+**Transport handshake** — every service must agree on `shm` vs `grpc`. The first peer to start publishes its
+choice into the segment; a peer wanting the other aborts with a diagnostic rather than reading garbage. The
+mode *persists* in the segment, so switching means `rm /dev/shm/sec-sys-shm` and restarting every peer.
+
+**Version handshake** — the segment header carries a magic number and a layout version, checked on the same
+path. Any change to the shm structs bumps `SHM_VERSION`, so a stale segment or a mismatched build fails
+fast instead of silently misreading. The layout is mirrored in Python for the display reader.
+
+**Data plane in C++** — ingest and inference, where the per-frame work is.
+
+**Everything above the hot path in Python** — tracking and alerting (per-frame, but never per-pixel), plus
+the actual control plane: control and display. The display service owns no lifecycle logic of its own; its
+buttons are a thin facade over `control_service.FleetController`.
+
+**Back pressure** — deliberately absent. Both buffers drop rather than block: the ring laps, and the frame
+queue evicts its oldest entry. A slow consumer loses frames instead of adding latency, which is the
+right trade for a live view.
+
+**Observability** — every service exposes Prometheus metrics on its own listener: per-hop latency,
+end-to-end frame age, frames dropped, queue depth, per-stream FPS and liveness. Labels stay bounded —
+`stream` and `class_id` only, never `track_id` or `frame_id`.
+
 
 ### Services
 
@@ -377,7 +457,9 @@ substituted at install time instead. Override with `SEC_SYS_ROOT_DIR`, `EDGE_AI_
 Re-run the installer after moving the repo or editing anything in `deploy/` — the rendered paths are
 absolute and go stale.
 
-If you are running the system for the first time use Option 2, first run builds the tensorrt engine and therefore takes 5-10 mins for infernce service to be up and running.
+> **First run — use Option 2.** The first start builds the TensorRT engine, so the inference service
+> takes 5–10 minutes to come up. That is long enough to trip the readiness gates in options 1 and 3;
+> run it once from a terminal where you can watch it, then switch to whichever option you prefer.
 
 ### Option 1 — script + systemd facade (recommended)
 
@@ -604,30 +686,13 @@ models/            best.onnx (runtime), best.pt (source), best.engine (TensorRT)
 dependency/        vendored CUDA / cuDNN / TensorRT / ORT / gRPC / prometheus     [gitignored]
 ```
 
-<!-- ---
+---
 
-## Gotchas
+## In progress
 
-- **Run C++ binaries from the repo root.** `models/best.onnx`, `config.yaml` and
-  `tests/frame_666.jpg` are all relative paths.
-- **Run Python services from their own directory.** They use flat imports (`import services_pb2`),
-  and `display_service` puts `tracking_service/` on `sys.path` — which also has a `main.py`.
-- **`ONNXRUNTIME_ROOT` is version-pinned** in `services/inference_service/CMakeLists.txt`
-  (`${CMAKE_SOURCE_DIR}/dependency/onnxruntime-linux-x64-gpu-1.22.0`). It follows the repo, but a
-  different ORT version needs `-DONNXRUNTIME_ROOT=...` or an edit there.
-- **preprocess ↔ postprocess are coupled.** The letterbox transform (scale `r`, centered padding) is
-  recomputed independently in `preprocess.cpp` and `postprocess.cpp`. Changing the input size (640)
-  or pad colour (114) requires editing both, or boxes land in the wrong place.
-- **The shm segment is `0600`.** Every service must run as the same user. This is why the systemd
-  units are `--user` units with no `User=`.
-- **`steady_clock` is per-boot and same-box only.** The per-hop latency metrics subtract monotonic
-  stamps across processes, which is valid on one machine and meaningless across two. A multi-box
-  deployment needs wall clocks plus NTP/PTP and a different metric.
-- **Don't edit the vendored trees**: `grpc/`, `yaml-cpp/`, `onnxruntime-*`.
-- **`.gitignore` excludes `*.md` except this file.** The per-service `README.md` and `CLAUDE.md`
-  notes exist locally but are not tracked — drop the `*.md` rule if you want them on GitHub.
-- The codebase is mid-refactor: expect commented-out prior implementations and empty placeholder
-  files (`docker/*`, several `services/**/*.py`). -->
+- [ ] Optimizing for an edge device — Jetson (aarch64)
+- [ ] Docker backend
+- [ ] Adding and removing cameras on a running system
 
 ---
 
