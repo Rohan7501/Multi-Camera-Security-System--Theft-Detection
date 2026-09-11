@@ -49,8 +49,8 @@ Two properties shape everything else:
 
 ### Detailed Data Flow
 
-**Ingest** spawns one `RtspReader` thread per stream and downscales every frame to fit 640×640 (the
-detector's input size) before publishing it through a `FrameWriter` — the same already-resized pixels on
+**Ingest** spawns one `RtspReader` thread per stream and downscales every frame to fit 640×640 before 
+publishing it through a `FrameWriter` — the same already-resized pixels on
 either transport, so inference sees identical coordinates. All readers share **one** gRPC channel to
 `INFERENCE_ADDR`, but each opens its **own** client-streaming `grpcStreamFrames` RPC. Under `shm` the
 pixels go to the ring and the RPC carries metadata only; under `grpc` they ride inline in the same message.
@@ -58,7 +58,7 @@ Ingest also runs an **`IngestAdmin`** gRPC server, so cameras can be added, star
 a *running* ingest with no restart.
 
 **Inference** is a server, a worker pool and a detector. The server accepts the frame RPCs and pushes each
-onto one shared `FrameQueue` (bounded at 400, drop-oldest). Four worker threads pop from it, fetch the
+onto one shared `FrameQueue`. Worker threads pop from it, fetch the
 pixels (from the ring or from the message), run the shared ONNX/YOLOv8 detector, and forward detections
 plus frame metadata to tracking over a client-streaming RPC that **self-heals** — it reopens with capped
 backoff if tracking restarts, losing only the frames sent while it was unreachable. The detector selects
@@ -86,9 +86,10 @@ via a `LifecycleBackend`) and **runtime** (camera add/start/stop on a live inges
 `(stream_id, frame_id)`. The inline-gRPC path is **partially implemented** and needs further work.
 
 **Torn-read safety** — each ring slot carries a seqlock, so a reader can never observe a half-written
-frame. The segment holds 16 streams × 240 slots.
+frame.
 
-**Transport handshake** — every service must agree on `shm` vs `grpc`. The first peer to start publishes its
+**Transport handshake** — every service must agree on `shm` vs `grpc`(partially implemented, system will break on grpc). 
+The first peer to start publishes its
 choice into the segment; a peer wanting the other aborts with a diagnostic rather than reading garbage. The
 mode *persists* in the segment, so switching means `rm /dev/shm/sec-sys-shm` and restarting every peer.
 
