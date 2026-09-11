@@ -36,9 +36,24 @@ while [ "$#" -gt 0 ]; do
     shift
 done
 
+# @GPU_LD_PATH@ comes from gpu_ld_path(), i.e. from scripts/dependencies.conf --
+# the same source run_inference.sh uses, so the unit and the launcher can never
+# drift apart. Resolved lazily: only the inference unit asks for it, so a box
+# that has no GPU stack can still render the other three.
+GPU_LD_PATH=""
+if grep -q '@GPU_LD_PATH@' "$REPO"/deploy/systemd/*.in "$REPO"/deploy/env/*.in 2>/dev/null; then
+    if ! GPU_LD_PATH="$(gpu_ld_path)"; then
+        echo "" >&2
+        echo "cannot render the inference unit without the GPU stack." >&2
+        echo "Set the paths in $DEP_CONF (copy scripts/dependencies.conf.example)." >&2
+        exit 1
+    fi
+fi
+
 render() {   # render <template> -> stdout
     sed -e "s|@SEC_SYS_ROOT_DIR@|$SEC_SYS_ROOT_DIR|g" \
-        -e "s|@EDGE_AI_ETC@|$EDGE_AI_ETC|g" "$1"
+        -e "s|@EDGE_AI_ETC@|$EDGE_AI_ETC|g" \
+        -e "s|@GPU_LD_PATH@|$GPU_LD_PATH|g" "$1"
 }
 
 echo "repo:     $SEC_SYS_ROOT_DIR"

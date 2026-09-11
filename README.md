@@ -80,7 +80,9 @@ the suspicion signal.
 
 The GPU stack is **vendored under `dependency/`** rather than installed system-wide, so the ONNX
 Runtime/TensorRT versions are pinned per-project and don't fight whatever CUDA the distro has. The
-run scripts and systemd units put these on `LD_LIBRARY_PATH` explicitly.
+run scripts and systemd units put these on `LD_LIBRARY_PATH` explicitly, both resolving the paths from
+`scripts/dependencies.conf` so they cannot drift apart. Nothing has to live under `dependency/` —
+point the conf at `/opt` or a shared mount if that is where your stack is.
 
 | Dependency | Version | Location |
 |---|---|---|
@@ -168,7 +170,8 @@ cmake --install "dependency/grpc/cmake/build"
 The prebuilt GPU stack is **not** covered by the script — download the CUDA/cuDNN/TensorRT tarballs
 from NVIDIA and the ONNX Runtime tarball from Microsoft into `dependency/`, using the exact
 version directory names in the table above. 
-If you already have the stack installed you can paste the directories in `scripts/dependencies.conf`
+If you already have the stack installed you can use that as well.
+Paste the directories in `scripts/dependencies.conf`
 
 Usefull Links
 ```bash
@@ -258,7 +261,10 @@ ctest --test-dir build --output-on-failure
 
 A detector smoke test needs a GPU and a model, it tests EP and CPU/GPU nms performace:
 It builds a tensorRT engine, expect it to take 10 mins on the slower side.
+Export CUDA, cuDNN, TensorRT and onnx-runtime path to run `onnx_test`. 
+Rest of the cases, where those paths are required, are handled by the scripts
 ```bash
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:path/to/CUDA/:path/to/cudnn/lib:path/to/tensorrt/lib:path/to/onnxruntime/lib
 ./build/services/inference_service/onnx_test --raw models/best.onnx --nms models/best_nms.onnx --image tests/frame_666.jpg
 ```
 
@@ -370,6 +376,8 @@ substituted at install time instead. Override with `SEC_SYS_ROOT_DIR`, `EDGE_AI_
 
 Re-run the installer after moving the repo or editing anything in `deploy/` — the rendered paths are
 absolute and go stale.
+
+If you are running the system for the first time use Option 2, first run builds the tensorrt engine and therefore takes 5-10 mins for infernce service to be up and running.
 
 ### Option 1 — script + systemd facade (recommended)
 

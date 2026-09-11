@@ -23,8 +23,10 @@ Type=simple
 WorkingDirectory=@SEC_SYS_ROOT_DIR@
 # Launch-time config, rendered by the control service:
 EnvironmentFile=@EDGE_AI_ETC@/inference.env
-# Sandboxed CUDA/cuDNN/TensorRT/ORT libs (see scripts/run_inference.sh):
-Environment=LD_LIBRARY_PATH=@SEC_SYS_ROOT_DIR@/dependency/TensorRT-10.8.0.43/lib:@SEC_SYS_ROOT_DIR@/dependency/cudnn-9.23.2.1/lib:@SEC_SYS_ROOT_DIR@/dependency/cuda_12.8.0/lib64:@SEC_SYS_ROOT_DIR@/dependency/onnxruntime-linux-x64-gpu-1.22.0/lib
+# CUDA/cuDNN/TensorRT/ORT libs. Filled in at render time from the directories in
+# scripts/dependencies.conf, via gpu_ld_path() -- the same source run_inference.sh
+# uses, so the unit and the script can never disagree. No versions live here.
+Environment=LD_LIBRARY_PATH=@GPU_LD_PATH@
 ExecStart=@SEC_SYS_ROOT_DIR@/build/services/inference_service/inference_service
 Restart=on-failure
 RestartSec=2
