@@ -34,7 +34,9 @@ readonly YAML_CPP_PREFIX="$DEP/yaml-cpp/_install"
 readonly GRPC_PREFIX="$HOME/.local"
 
 # Pinned versions -- keep these identical across every machine in the fleet.
-readonly YAML_CPP_TAG="0.9.0"
+# NB: yaml-cpp tags are inconsistently named -- 0.8.0 is tagged bare ("0.8.0")
+# but 0.9.0 is prefixed ("yaml-cpp-0.9.0"). Do not "tidy" this to a bare number.
+readonly YAML_CPP_TAG="yaml-cpp-0.9.0"
 readonly GRPC_TAG="v1.78.1"           # bundles protobuf 31.1 -> also installs protoc
 readonly PROMETHEUS_CPP_TAG="v1.3.0"  # its 3rdparty/civetweb submodule is pinned at v1.16
 
@@ -56,7 +58,22 @@ log()  { printf '\n\033[1;32m==> %s\033[0m\n' "$*"; }
 skip() { printf '\033[1;33m--- %s already installed (FORCE=1 to rebuild)\033[0m\n' "$*"; }
 
 log "repo=$ROOT  yaml-cpp=$YAML_CPP_PREFIX  gRPC=$GRPC_PREFIX  jobs=$JOBS"
-mkdir -p "$DEP"
+
+# Guard against a mistyped SEC_SYS_ROOT_DIR before creating anything -- otherwise
+# a wrong path silently grows its own dependency/ tree and the build still fails.
+if [ ! -f "$ROOT/CMakeLists.txt" ]; then
+    echo "SEC_SYS_ROOT_DIR=$ROOT does not look like the repo root (no CMakeLists.txt)" >&2
+    exit 1
+fi
+
+# dependency/ holds every vendored tree and is gitignored, so a fresh clone
+# never has it.
+if [ -d "$DEP" ]; then
+    printf '    dependency/ exists: %s\n' "$DEP"
+else
+    mkdir -p "$DEP"
+    printf '    dependency/ created: %s\n' "$DEP"
+fi
 
 # ----------------------------------------------------------------- yaml-cpp
 # find_package(yaml-cpp REQUIRED) in services/ingest_service needs an INSTALLED
@@ -102,7 +119,6 @@ else
         -DgRPC_BUILD_TESTS=OFF \
         -DCMAKE_CXX_STANDARD=17
     cmake --build "$DEP/grpc/cmake/build" -j"$JOBS"
-    cmake --install "$DEP/grpc/cmake/build"
 fi
 
 # ------------------------------------------------------------ prometheus-cpp
@@ -141,19 +157,5 @@ fi
 # fetched by hand into dependency/ using the exact version directory names in
 # the README's dependency table.
 log "All dependencies installed."
-cat <<EOF
+echo "grpc needs to be installed user-wide check repo for next step \n"
 
-Configure the project with:
-
-  cmake -S "$ROOT" -B "$ROOT/build"
-
-No -DCMAKE_PREFIX_PATH is needed: the root CMakeLists resolves yaml-cpp through
-YAML_CPP_ROOT ($YAML_CPP_PREFIX) and gRPC through GRPC_ROOT ($GRPC_PREFIX).
-
-The build invokes protoc via the protobuf::protoc target, so it does not need
-protoc on PATH. For running protoc by hand -- e.g. regenerating the Python
-stubs -- put the gRPC prefix ahead of any distro protoc:
-
-  echo 'export PATH="\$HOME/.local/bin:\$PATH"' >> ~/.bashrc && source ~/.bashrc
-  protoc --version          # expect: libprotoc 31.1
-EOF

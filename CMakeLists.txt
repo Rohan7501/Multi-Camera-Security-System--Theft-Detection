@@ -26,8 +26,12 @@ set(CMAKE_CXX_FLAGS_DEBUG "-g -O0")
 set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-g -O2")
 
 # ---- Sanitizers ----
-option(ENABLE_ASAN "Enable AddressSanitizer" ON)
-option(ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" ON)
+# Off by default: both cost real throughput (ASan roughly 2x slower and several
+# times the RSS), which matters on a box already saturating a GPU at frame rate.
+# Turn them on deliberately when chasing a memory or UB bug:
+#   cmake -S . -B build-asan -DENABLE_ASAN=ON -DENABLE_UBSAN=ON
+option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
+option(ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
 
 if(ENABLE_ASAN)
     add_compile_options(-fsanitize=address)

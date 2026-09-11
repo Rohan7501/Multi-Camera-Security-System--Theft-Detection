@@ -1,4 +1,4 @@
-# edge-ai-system
+# Theft Detection System
 
 Real-time edge video analytics for retail shoplifting detection. Frames flow from RTSP cameras
 through ingest, ONNX/YOLOv8 inference, ByteTrack tracking and an EWMA suspicion engine, ending in
@@ -91,34 +91,41 @@ run scripts and systemd units put these on `LD_LIBRARY_PATH` explicitly.
 | gRPC + protobuf | 1.78.1 / protoc 31.1 | `dependency/grpc` → `~/.local` |
 | prometheus-cpp | — | `dependency/prometheus-cpp/_install` |
 | Prometheus server | 3.13.2 | `dependency/prometheus-3.13.2.linux-amd64` |
-| yaml-cpp | master | `dependency/yaml-cpp` |
+| yaml-cpp | 0.9.0 (tag `yaml-cpp-0.9.0`) | `dependency/yaml-cpp/_install` |
 | OpenCV (C++) | 4.8.0 | `/usr/local/lib/cmake/opencv4` |
 | MediaMTX | v1.16.2 | `rtsp_server/mediamtx` |
 | FFmpeg | 4.4.2 | system |
 
-Python packages:
+Python packages are pinned in `requirements.txt`:
 
-| Package | Version |
-|---|---|
-| grpcio | 1.64.1 |
-| protobuf | 6.33.6 |
-| numpy | 1.26.4 |
-| scipy | 1.13.1 |
-| opencv-python | 4.10.0 |
-| fastapi | 0.118.0 |
-| uvicorn | 0.34.0 |
-| prometheus-client | 0.20.0 |
+## Prerequisites and Dependencies
 
 ```bash
-pip install -r requirements.txt          # runtime
-pip install -r requirements-dev.txt      # + pytest and ruff
+git clone https://github.com/Rohan7501/Multi-Camera-Security-System--Theft-Detection.git
+cd Multi-Camera-Security-System--Theft-Detection
+mkdir dependency
+export SEC_SYS_ROOT_DIR=$PWD
 ```
 
-### Prerequisites
+It recommended to add `SEC_SYS_ROOT_DIR` to `~/.bashrc` as all scripts depend on it 
+```bash
+nano ~/.bashrc
+```
+
+Paste at the end of `.bashrc` file
+```bash
+export SEC_SYS_ROOT_DIR=/path/to/repo
+```
+
+Reload changes
+```bash
+source ~/.bashrc
+echo $SEC_SYS_ROOT_DIR # Should print path to repo root
+```
 
 These are the **only** commands in the bring-up that need `sudo` —
 `scripts/install_dependencies.sh` deliberately contains none, so it can run unprivileged and installs
-everything either into `dependency/` or into `~/.local`. Run these by hand first:
+everything either into `dependency/` or into `~/.local`. 
 
 ```bash
 sudo apt-get update
@@ -128,23 +135,17 @@ sudo apt-get install -y \
     zlib1g-dev libssl-dev \
     curl ca-certificates
 ```
-
-`zlib1g-dev` is required — prometheus-cpp's `ENABLE_COMPRESSION` defaults on and does
-`find_package(ZLIB REQUIRED)`. OpenCV is expected to already be installed at
-`/usr/local/lib/cmake/opencv4`.
-
-> **Do not `sudo apt install protobuf-compiler`.** `protoc` comes from the gRPC build below, matched to
-> protobuf 31.1. Ubuntu 22.04 ships protoc 3.12 and JetPack 5 ships 3.6; neither can read code
-> generated against protobuf 31. If a distro `protoc` is already present, make sure `~/.local/bin`
-> precedes `/usr/bin` on your `PATH`.
-
-### Fetching the dependencies
-
-`dependency/` and `models/` are **gitignored** — a fresh clone has neither. The helper clones, builds
-and installs the three source dependencies — yaml-cpp, gRPC (with protoc) and prometheus-cpp:
+Python dependencies
 
 ```bash
-export SEC_SYS_ROOT_DIR=$PWD
+pip install -r requirements.txt          # runtime
+pip install -r requirements-dev.txt      # + pytest and ruff
+```
+
+OpenCV(C++) is expected to already be installed at `/usr/local/lib/cmake/opencv4`.
+
+Install build dependencies
+```bash
 scripts/install_dependencies.sh
 ```
 
@@ -157,20 +158,41 @@ scripts/install_dependencies.sh
 Each step short-circuits on its installed-config marker, so a re-run after a failure resumes rather
 than rebuilding gRPC from scratch.
 
-The prebuilt GPU stack is **not** covered by the script — download the CUDA/cuDNN/TensorRT tarballs
-from NVIDIA and the ONNX Runtime tarball from Microsoft into `dependency/` by hand, using the exact
-version directory names in the table above. On aarch64 note that Microsoft's release tarball is
-CPU-only; GPU inference on Jetson needs ONNX Runtime built from source with `--use_tensorrt`.
-
-prometheus-cpp must be **installed to a prefix**, not consumed from its build tree — the config in
-`_build/` computes its prefix as if installed and misresolves. The script does this for you; to redo
-it after rebuilding the library:
+gRPC needs to be installed user-wide because of the other dependencies
+it pulls in, therefore `install` present separately
 
 ```bash
-cmake --install dependency/prometheus-cpp/_build --prefix dependency/prometheus-cpp/_install
+cmake --install "dependency/grpc/cmake/build"
+```
+
+The prebuilt GPU stack is **not** covered by the script — download the CUDA/cuDNN/TensorRT tarballs
+from NVIDIA and the ONNX Runtime tarball from Microsoft into `dependency/`, using the exact
+version directory names in the table above. 
+If you already have the stack installed you can paste the directories in `scripts/dependencies.conf`
+
+Usefull Links
+```bash
+# CUDA Toolkit
+wget https://developer.download.nvidia.com/compute/cuda/12.8.0/local_installers/cuda_12.8.0_570.86.10_linux.run
+chmod +x cuda_12.8.0_570.86.10_linux.run
+./cuda_12.8.0_570.86.10_linux.run --toolkit \
+  --toolkitpath="$SEC_SYS_ROOT_DIR/dependency/cuda_12.8.0" --no-drm --override --silent
+
+# TensorRT
+https://developer.nvidia.com/tensorrt/download/10x
+→ TensorRT 10.8 GA → TensorRT-10.8.0.43.Linux.x86_64-gnu.cuda-12.8.tar.gz
+
+# cuDNN
+https://developer.nvidia.com/cudnn-downloads
+→ Linux x86_64 → Tarball → cudnn-linux-x86_64-9.23.2.1_cuda12-archive.tar.xz
+
+# Onnx runtime
+https://github.com/microsoft/onnxruntime/releases/tag/v1.22.0
+→ onnxruntime-linux-x64-gpu-1.22.0.tgz
 ```
 
 Place your trained YOLOv8 export at `models/best.onnx`.
+You can download the models from: https://drive.google.com/drive/folders/1NQmzW6VyQ1RuNGcYgWJcdRNy96g3iORh?usp=drive_link
 
 ---
 
@@ -178,11 +200,9 @@ Place your trained YOLOv8 export at `models/best.onnx`.
 
 ### 1. Compile the protos
 
-**C++ stubs are generated automatically** by CMake — the root `CMakeLists.txt` runs `protoc` on
-`proto/services.proto` into `build/` as part of the `inference_proto` target. Nothing to do by hand.
-
-**Python stubs are not**, and must be regenerated into each Python service that speaks gRPC whenever
-`proto/services.proto` changes:
+Regenerate after any change to `proto/services.proto`. It takes **two** invocations — one per language
+— because `--plugin=protoc-gen-grpc=` binds a single plugin to the name `grpc`, and C++ and Python need
+different ones:
 
 ```bash
 for svc in tracking_service control_service; do
@@ -194,23 +214,18 @@ for svc in tracking_service control_service; do
 done
 ```
 
-This produces `services_pb2.py` and `services_pb2_grpc.py`. The Python services use **flat imports**
-(`import services_pb2`), which is why the stubs live beside the code and why each service must be run
-from its own directory.
+C++ gets `services.pb.{cc,h}` and `services.grpc.pb.{cc,h}`; Python gets `services_pb2.py` and
+`services_pb2_grpc.py`. The Python services use **flat imports** (`import services_pb2`), which is why
+the stubs live beside the code and why each service must be run from its own directory.
+
+The C++ side is also generated **automatically** by CMake into `build/` as part of the
+`inference_proto` target, and that copy is what actually compiles. 
 
 ### 2. Compile the project
 
 ```bash
 cmake -S . -B build
 cmake --build build -j
-```
-
-Useful options:
-
-```bash
-cmake -S . -B build -DENABLE_ASAN=OFF -DENABLE_UBSAN=OFF   # sanitizers default ON in a fresh configure
-cmake -S . -B build -DENABLE_VISUALIZATION=ON              # ingest: cv::imshow the captured RTSP frames
-cmake --build build --target inference_service             # single target
 ```
 
 Build type defaults to `RelWithDebInfo`. Only `common`, `services/ingest_service` and
@@ -241,18 +256,10 @@ ctest --test-dir build --output-on-failure
 | `rtsp_reader` | dead/garbage camera URLs must not hang, crash or leak threads |
 | `python_unit` | suspicion EWMA + hysteresis, rules, engine dedupe/cooldown, frame age, sinks |
 
-Python alone (no CMake):
-
+A detector smoke test needs a GPU and a model, it tests EP and CPU/GPU nms performace:
+It builds a tensorRT engine, expect it to take 10 mins on the slower side.
 ```bash
-pip install -r requirements-dev.txt
-pytest -q tests/
-ruff check services/ tests/
-```
-
-A detector smoke test needs a GPU and a model, so it is not a ctest case — run it by hand:
-
-```bash
-./build/services/inference_service/onnx_test models/best.onnx tests/frame_666.jpg
+./build/services/inference_service/onnx_test --raw models/best.onnx --nms models/best_nms.onnx --image tests/frame_666.jpg
 ```
 
 ---
@@ -261,6 +268,7 @@ A detector smoke test needs a GPU and a model, so it is not a ctest case — run
 
 There are no real cameras in development. MediaMTX acts as the RTSP server and FFmpeg loops a video
 file into it once per camera, which is indistinguishable from a real feed to ingest.
+Check readme.md at `/rtsp_server` for download
 
 Start the RTSP server:
 
@@ -277,10 +285,6 @@ for i in $(seq 1 8); do
     -loglevel error &
 done
 ```
-
-`-re` paces the file at its native frame rate (without it FFmpeg floods the server as fast as it can
-decode), `-stream_loop -1` repeats forever, and `-c copy` avoids a re-encode so eight publishers cost
-almost no CPU and leave the GPU to inference.
 
 Verify a stream is live before starting the pipeline:
 
@@ -321,7 +325,56 @@ be listening before its client starts.
 All three options need `FRAME_TRANSPORT` to be **identical** across ingest, inference and tracking.
 The C++ `checkTransport` handshake aborts a peer on mismatch rather than letting it read garbage.
 
+### Installing the systemd units — do this first for options 1 and 3
+
+Option 2 runs the binaries directly and needs none of this. **Options 1 and 3 both drive
+`systemctl --user`**, so the units and their env files must be in place before either will work.
+
+Units are **user units** in `~/.config/systemd/user/`, not system units. That matters: the shm segment
+is created `0600`, so producer and consumer must share an owner, and `--user` units already run as the
+invoking user with no `User=`/`Group=` needed.
+
+The units and env files ship in `deploy/` as **templates** (`*.in`) and are rendered for your checkout
+by the installer. Rendering is **all** it does — it installs nothing, never runs `sudo`, and never
+talks to systemd:
+
+```bash
+scripts/install_systemd.sh --dry-run     # print what would be rendered
+scripts/install_systemd.sh               # render into deploy/rendered/
+```
+
+That leaves eight files in the gitignored `deploy/rendered/` — four `.env` and four `.service`.
+
+```bash
+# 1. env files, as root (units won't start without them)
+sudo install -d /etc/edge-ai
+sudo install -m 644 deploy/rendered/*.env /etc/edge-ai/
+
+# 2. user units, then pick them up
+install -d ~/.config/systemd/user
+install -m 644 deploy/rendered/*.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+```
+
+The script prints these same commands when it finishes, with your paths already filled in.
+
+Copying and reloading stay manual on purpose. One step needs root and the other changes the state of
+a box that may be running the fleet — neither should happen as a side effect of regenerating some
+files. It also means you can diff `deploy/rendered/` against what is already installed before
+overwriting anything.
+
+The templating is not optional. systemd expands `${VAR}` only in `ExecStart=` *arguments* — never in
+`WorkingDirectory=`, `EnvironmentFile=`, or the `ExecStart=` binary path, all of which must be
+literal absolute paths. So `SEC_SYS_ROOT_DIR` cannot be referenced from a unit file directly; it is
+substituted at install time instead. Override with `SEC_SYS_ROOT_DIR`, `EDGE_AI_ETC` or `UNIT_DIR`.
+
+Re-run the installer after moving the repo or editing anything in `deploy/` — the rendered paths are
+absolute and go stale.
+
 ### Option 1 — script + systemd facade (recommended)
+
+Needs the units installed — see [Installing the systemd units](#installing-the-systemd-units--do-this-first-for-options-1-and-3)
+above.
 
 Start the display service, then drive the whole pipeline from the browser. The display service calls
 `control_service.FleetController`, which delegates to `systemctl --user` in dependency order **and
@@ -372,18 +425,15 @@ scripts/run_tracker.sh
 # terminal 3 — inference   (waits for nothing; start it after tracking is listening)
 scripts/run_inference.sh
 
-# terminal 4 — RTSP server + camera publishers + ingest
+# terminal 4 — ingest
 scripts/run_ingest.sh
 ```
 
-`run_inference.sh` sets `LD_LIBRARY_PATH` for the vendored CUDA/cuDNN/TensorRT/ORT libraries — the
-inference binary will not start without it. `run_ingest.sh` also starts MediaMTX and two FFmpeg
-publishers itself, so skip the manual simulation step if you use it. For eight cameras, publish them
-by hand as shown above and run the binary directly:
+Bring the cameras up **before** terminal 4 — `run_ingest.sh` runs the ingest binary and nothing else.
+Start MediaMTX and the FFmpeg publishers as shown in [Simulating RTSP streams](#simulating-rtsp-streams)
 
-```bash
-./build/services/ingest_service/ingest_service
-```
+`run_inference.sh` sets `LD_LIBRARY_PATH` for the vendored CUDA/cuDNN/TensorRT/ORT libraries — the
+inference binary will not start without it.
 
 Watch for `InferenceWorker pool started` and `TrackingClient -> 127.0.0.1:50052` in the inference
 terminal — that pair means the pipeline is wired up.
@@ -392,40 +442,8 @@ This option gives you stdout in front of you, which is the reason to prefer it w
 
 ### Option 3 — systemd only
 
-Units are **user units** in `~/.config/systemd/user/`, not system units. That matters: the shm
-segment is created `0600`, so producer and consumer must share an owner, and `--user` units already
-run as the invoking user with no `User=`/`Group=` needed.
-
-Install once. The units and env files ship in `deploy/` as **templates** (`*.in`) and are rendered for
-your checkout by the installer. Rendering is all it does — it never runs `sudo` and never talks to
-systemd:
-
-```bash
-scripts/install_systemd.sh --dry-run     # print what would be written
-scripts/install_systemd.sh               # render; installs the user units
-```
-
-It then prints the three remaining steps, which are yours to run:
-
-```bash
-sudo install -d /etc/edge-ai                              # 1. env files, as root
-sudo install -m 644 deploy/rendered/*.env /etc/edge-ai/
-
-systemctl --user daemon-reload                            # 2. pick up the units
-
-systemctl --user start edge-display                       # 3. start
-```
-
-The user units go straight into `~/.config/systemd/user/` — your own directory, no privileges needed.
-The env files are only *rendered*, into the gitignored `deploy/rendered/`. Copying them into `/etc`
-and reloading the systemd manager both stay manual on purpose: one needs root and the other changes
-the state of a box that may be running the fleet, and neither should happen as a side effect of
-regenerating some files.
-
-The templating is not optional. systemd expands `${VAR}` only in `ExecStart=` *arguments* — never in
-`WorkingDirectory=`, `EnvironmentFile=`, or the `ExecStart=` binary path, all of which must be
-literal absolute paths. So `SEC_SYS_ROOT_DIR` cannot be referenced from a unit file directly; it is
-substituted at install time instead. Override with `SEC_SYS_ROOT_DIR`, `EDGE_AI_ETC` or `UNIT_DIR`.
+Needs the units installed — see [Installing the systemd units](#installing-the-systemd-units--do-this-first-for-options-1-and-3)
+above. No facade here: you drive `systemctl` yourself and own the ordering.
 
 Start in order:
 
@@ -578,7 +596,7 @@ models/            best.onnx (runtime), best.pt (source), best.engine (TensorRT)
 dependency/        vendored CUDA / cuDNN / TensorRT / ORT / gRPC / prometheus     [gitignored]
 ```
 
----
+<!-- ---
 
 ## Gotchas
 
@@ -601,7 +619,7 @@ dependency/        vendored CUDA / cuDNN / TensorRT / ORT / gRPC / prometheus   
 - **`.gitignore` excludes `*.md` except this file.** The per-service `README.md` and `CLAUDE.md`
   notes exist locally but are not tracked — drop the `*.md` rule if you want them on GitHub.
 - The codebase is mid-refactor: expect commented-out prior implementations and empty placeholder
-  files (`docker/*`, several `services/**/*.py`).
+  files (`docker/*`, several `services/**/*.py`). -->
 
 ---
 

@@ -1,0 +1,34 @@
+# Where each dependency lives on THIS machine.
+#
+#   cp scripts/dependencies.conf.example scripts/dependencies.conf
+#   # then paste your own absolute paths below
+#
+# dependencies.conf is gitignored -- it is per-machine, so it must never be
+# committed. This example file is the tracked template.
+#
+# Paste the ROOT of each dependency, not its lib/ directory: the scripts probe
+# for lib64/ then lib/ themselves, which is why CUDA (lib64) and TensorRT (lib)
+# both work without you saying which is which.
+#
+# Absolute paths. Nothing has to live under the repo -- point at /opt, /usr/local
+# or a shared NFS mount if that is where your stack is installed.
+# Anything already exported in your environment overrides what is set here.
+
+# --- GPU stack: needed by scripts/run_inference.sh only ----------------------
+
+# CUDA toolkit root (contains lib64/)
+CUDA_DIR=/path/to/cuda
+
+# cuDNN root (contains lib/)
+CUDNN_DIR=/path/to/cudnn
+
+# TensorRT root (contains lib/)
+TENSORRT_DIR=/path/to/TensorRT
+
+# ONNX Runtime root (contains lib/ and include/)
+ONNXRUNTIME_DIR=/path/to/onnxruntime-linux-x64-gpu
+
+# --- monitoring: needed by scripts/run_prometheus.sh only --------------------
+
+# Prometheus release directory (contains the `prometheus` binary)
+PROMETHEUS_DIR=/path/to/prometheus-linux-amd64

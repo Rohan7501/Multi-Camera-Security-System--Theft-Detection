@@ -39,3 +39,6 @@
 
 # rendered systemd env files (generated from deploy/env/*.in)
 /deploy/rendered
+
+# per-machine dependency paths (template: scripts/dependencies.conf.example)
+/scripts/dependencies.conf

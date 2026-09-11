@@ -13,7 +13,7 @@ set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 ROOT="$SEC_SYS_ROOT_DIR"
-PROM="$DEP/prometheus-${PROM_VERSION:-3.13.2}.linux-amd64/prometheus"
+PROM="$(prometheus_bin)"
 RETENTION="${PROM_RETENTION:-7d}"
 PORT="${PROM_PORT:-9090}"
 

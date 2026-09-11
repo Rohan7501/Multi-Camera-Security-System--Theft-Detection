@@ -1,22 +1,21 @@
 #!/usr/bin/env bash
-# Render deploy/{systemd,env}/*.in for THIS checkout.
+# Render deploy/{systemd,env}/*.in for THIS checkout into deploy/rendered/.
 #
 # systemd cannot do this itself: WorkingDirectory=, EnvironmentFile= and the
 # ExecStart= binary path are all literal -- systemd expands ${VAR} only in
 # ExecStart *arguments*, never in a path. So the units ship as templates with
 # @SEC_SYS_ROOT_DIR@ / @EDGE_AI_ETC@ placeholders and are rendered here.
 #
-#   scripts/install_systemd.sh              # render + install the user units
-#   scripts/install_systemd.sh --dry-run    # print what would be written
+#   scripts/install_systemd.sh              # render into deploy/rendered/
+#   scripts/install_systemd.sh --dry-run    # print what would be rendered
 #
-# Rendering is ALL this does. It never runs sudo and never talks to systemd:
-# user units go to UNIT_DIR (your own directory), env files are rendered to
-# deploy/rendered/ for you to install as root, and daemon-reload is yours to run.
-# The remaining steps are printed at the end.
+# Rendering is ALL this does. Nothing is installed, no sudo is run, and systemd
+# is never contacted -- you copy the files and reload yourself. The commands to
+# do that are printed at the end and documented in README.md.
 #
 #   SEC_SYS_ROOT_DIR  repo root      (default: this checkout)
 #   EDGE_AI_ETC       env-file dir   (default: /etc/edge-ai) -- baked into the units
-#   UNIT_DIR          unit dir       (default: ~/.config/systemd/user)
+#   UNIT_DIR          unit dir       (default: ~/.config/systemd/user) -- printed only
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
@@ -30,7 +29,7 @@ while [ "$#" -gt 0 ]; do
     case "$1" in
         --dry-run) DRY_RUN=1 ;;
         -h|--help)
-            sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
+            sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
             exit 0 ;;
         *) echo "unknown argument: $1 (try --help)" >&2; exit 2 ;;
     esac
@@ -42,13 +41,13 @@ render() {   # render <template> -> stdout
         -e "s|@EDGE_AI_ETC@|$EDGE_AI_ETC|g" "$1"
 }
 
-echo "repo:      $SEC_SYS_ROOT_DIR"
-echo "units   -> $UNIT_DIR"
-echo "env     -> $STAGING  (copy to $EDGE_AI_ETC yourself)"
+echo "repo:     $SEC_SYS_ROOT_DIR"
+echo "rendered: $STAGING"
 echo
 
-# --- env files: rendered to staging only; never written to $EDGE_AI_ETC -------
-for tpl in "$REPO"/deploy/env/*.env.in; do
+# Everything lands in staging. The two kinds are told apart by extension later,
+# which is what makes the printed copy commands a pair of clean globs.
+for tpl in "$REPO"/deploy/env/*.env.in "$REPO"/deploy/systemd/*.service.in; do
     name="$(basename "$tpl" .in)"
     if [ "$DRY_RUN" = 1 ]; then
         echo "--- $STAGING/$name"; render "$tpl"; echo
@@ -57,18 +56,6 @@ for tpl in "$REPO"/deploy/env/*.env.in; do
     mkdir -p "$STAGING"
     render "$tpl" > "$STAGING/$name"
     echo "rendered $STAGING/$name"
-done
-
-# --- user units ---------------------------------------------------------------
-for tpl in "$REPO"/deploy/systemd/*.service.in; do
-    name="$(basename "$tpl" .in)"
-    if [ "$DRY_RUN" = 1 ]; then
-        echo "--- $UNIT_DIR/$name"; render "$tpl"; echo
-        continue
-    fi
-    mkdir -p "$UNIT_DIR"
-    render "$tpl" > "$UNIT_DIR/$name"
-    echo "installed $UNIT_DIR/$name"
 done
 
 if [ "$DRY_RUN" = 1 ]; then
@@ -84,7 +71,9 @@ NEXT -- three steps, all yours to run:
        sudo install -d $EDGE_AI_ETC
        sudo install -m 644 $STAGING/*.env $EDGE_AI_ETC/
 
-  2. pick up the new unit definitions
+  2. install the user units, then pick them up
+       install -d $UNIT_DIR
+       install -m 644 $STAGING/*.service $UNIT_DIR/
        systemctl --user daemon-reload
 
   3. start the fleet
