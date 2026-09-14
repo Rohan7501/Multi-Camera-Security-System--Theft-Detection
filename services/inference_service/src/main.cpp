@@ -54,7 +54,7 @@ int main()
 
     FrameQueue<FramePacket> frame_queue(400);
 
-    OnnxDetector detector;
+    OnnxDetector detector(ExecutionProvider::CUDA);
     detector.load_model("models/best.onnx");
 
     FrameStore* fs = createShm();

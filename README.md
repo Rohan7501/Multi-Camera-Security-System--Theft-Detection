@@ -13,25 +13,7 @@ display, control) handle tracking, alerting, the UI and fleet lifecycle.
 
 ![System architecture](System.png)
 
-<!-- Cameras land on **ingest**, which decodes RTSP and publishes raw BGR frames into a **shared-memory
-ring buffer**, sending only a lightweight reference over gRPC. **Inference** pops those references
-from a bounded frame queue, fetches the pixels from the ring, and runs YOLOv8 through ONNX Runtime
-on a pool of worker threads sharing one session. Detections are pushed forward over gRPC to
-**tracking**, which assigns track IDs, feeds a per-track EWMA suspicion score through hysteresis and
-a sustain window, and emits alerts to JSON and SQLite. **Display** reads frames straight from the
-ring and detections from a small shm feed, joins them by `frame_id`, and serves the annotated video.
-
-Two design decisions are worth calling out because they shape everything else:
-
-**Frames never travel twice.** Pixels go into the shm ring once and every downstream consumer reads
-them in place by `(stream_id, frame_id)`. gRPC carries references, not images. A 1080p frame is
-~6 MB; at 8 cameras × 15 fps that is ~750 MB/s that never touches the network stack.
-
-**The flow is one-directional.** Nothing returns to ingest. Each stage pushes forward and forgets,
-so a slow or dead consumer can never apply backpressure to camera capture — the ring laps and the
-newest frames win. -->
-
-The system has a micro-service architecture — see the `Services` table below.
+The system has a micro-service architecture — see the `Services` [table](#services) below.
 
 ### Working/High Level Data Flow
 
@@ -123,6 +105,8 @@ end-to-end frame age, frames dropped, queue depth, per-stream FPS and liveness. 
 | `display_service` | Python | FastAPI dashboard: MJPEG camera wall, alerts, lifecycle control |
 | `control_service` | Python | Fleet lifecycle facade over systemd/compose + runtime camera plane |
 
+[Data Flow](#workinghigh-level-data-flow)
+
 ### Ports
 
 | Service | gRPC | Metrics | Other |
@@ -146,7 +130,7 @@ the suspicion signal.
 
 ---
 
-## My setup
+## My setup / Development Stack
 
 | | |
 |---|---|
