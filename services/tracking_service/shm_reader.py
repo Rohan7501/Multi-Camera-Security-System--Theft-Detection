@@ -17,7 +17,7 @@ SHM_PATH = "/dev/shm/sec-sys-shm"
 
 # ---- constants (must match common/shm.hpp) ---------------------------------
 MAX_STREAMS = 16
-RING_DEPTH = 240
+RING_DEPTH = 100
 SLOT_BYTES = 640 * 640 * 3            # 1_228_800
 
 SHM_MAGIC = 0x53484D31               # "SHM1"; identifies an edge-ai segment

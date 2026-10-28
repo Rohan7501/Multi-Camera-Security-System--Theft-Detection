@@ -9,7 +9,7 @@
 // a seqlock so a reader never sees a half-written frame.
 
 constexpr int    MAX_STREAMS = 16;
-constexpr int    RING_DEPTH  = 240;
+constexpr int    RING_DEPTH  = 100;
 constexpr size_t SLOT_BYTES  = 640 * 640 * 3;   // max bytes of a stored frame
 
 // Segment header identity. `magic` marks this as an edge-ai shm segment; `version`

@@ -29,6 +29,11 @@ struct Metrics
               .Name("inference_frame_unavailable_total")
               .Help("frames skipped: pixels could not be resolved from the transport")
               .Register(reg)),
+          stale(prometheus::BuildCounter()
+              .Name("inference_frame_stale_total")
+              .Help("frames skipped before inference: older than INFERENCE_MAX_AGE_MS "
+                    "(capture age) when a worker took them")
+              .Register(reg)),
           latency(prometheus::BuildHistogram()
               .Name("inference_latency_seconds")
               .Help("detector infer() wall time per frame")
@@ -65,6 +70,7 @@ struct Metrics
     struct Stream {
         prometheus::Counter*   frames;
         prometheus::Counter*   unavailable;
+        prometheus::Counter*   stale;
         prometheus::Histogram* latency;
     };
 
@@ -73,6 +79,7 @@ struct Metrics
         return Stream{
             &frames.Add({{"stream", id}}),
             &unavailable.Add({{"stream", id}}),
+            &stale.Add({{"stream", id}}),
             &latency.Add({{"stream", id}}, metrics::latencyBuckets()),
         };
     }
@@ -93,6 +100,7 @@ struct Metrics
     prometheus::Family<prometheus::Counter>&   frames;
     prometheus::Family<prometheus::Counter>&   detections;
     prometheus::Family<prometheus::Counter>&   unavailable;
+    prometheus::Family<prometheus::Counter>&   stale;
     prometheus::Family<prometheus::Histogram>& latency;
     prometheus::Family<prometheus::Histogram>& ingest_latency;
     prometheus::Family<prometheus::Gauge>&     queue_depth;

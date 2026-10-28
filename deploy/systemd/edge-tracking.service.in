@@ -22,6 +22,10 @@ Type=simple
 WorkingDirectory=@SEC_SYS_ROOT_DIR@/services/tracking_service
 # Launch-time config, rendered by the control service:
 EnvironmentFile=@EDGE_AI_ETC@/tracking.env
+# numpy/scipy BLAS threads. Idle OpenBLAS threads busy-wait, and ByteTrack's
+# per-frame 4x4 solves kept ~5 cores spinning; main.py falls back to 1 too.
+# A value in tracking.env wins: EnvironmentFile= overrides Environment=.
+Environment=OPENBLAS_NUM_THREADS=1
 ExecStart=/usr/bin/python3 main.py
 Restart=on-failure
 RestartSec=2

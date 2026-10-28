@@ -150,6 +150,19 @@ target_include_directories(test_frame_queue PRIVATE
 target_link_libraries(test_frame_queue PRIVATE Threads::Threads)
 add_test(NAME frame_queue COMMAND test_frame_queue)
 
+# InferenceWorker's age-based drop, against a fake detector, reader and writer:
+# no model, GPU, gRPC peer or shm segment needed.
+add_executable(test_inference_worker
+    ${CMAKE_SOURCE_DIR}/tests/test_inference_worker.cpp
+    ${CMAKE_SOURCE_DIR}/services/inference_service/src/inference_worker.cpp
+)
+target_include_directories(test_inference_worker PRIVATE
+    ${CMAKE_SOURCE_DIR}/services/inference_service/src
+)
+target_link_libraries(test_inference_worker PRIVATE
+    common_lib shm metrics_lib inference_proto Threads::Threads)
+add_test(NAME inference_worker COMMAND test_inference_worker)
+
 # RtspReader drags in gRPC, OpenCV and the shm segment, so it links ingest_core.
 add_executable(test_rtsp_reader ${CMAKE_SOURCE_DIR}/tests/test_rtsp_reader.cpp)
 target_include_directories(test_rtsp_reader PRIVATE

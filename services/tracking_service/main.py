@@ -17,6 +17,14 @@ import time
 from concurrent import futures
 from pathlib import Path
 
+# numpy's OpenBLAS sizes its thread pool once, when numpy loads, and the idle
+# helpers busy-wait: ByteTrack's per-frame 4x4 solves kept cores spinning
+try:
+    _blas_threads = int(os.environ.get("OPENBLAS_NUM_THREADS", ""))
+except ValueError:
+    _blas_threads = 0
+os.environ["OPENBLAS_NUM_THREADS"] = str(_blas_threads) if _blas_threads > 0 else "1"
+
 import grpc
 
 import services_pb2
@@ -32,9 +40,28 @@ from alert_engine import AlertEngine
 log = logging.getLogger("tracking")
 
 
+def max_age_ns(default_ms: int = 80) -> int:
+    """Safety-net capture-age limit for an arriving frame, from TRACKING_MAX_AGE_MS.
+
+    0 disables the drop; unset, unparseable or negative falls back to the default
+    -- the same rules as inference's INFERENCE_MAX_AGE_MS.
+    """
+    try:
+        ms = int(os.getenv("TRACKING_MAX_AGE_MS", ""))
+    except ValueError:
+        ms = default_ms
+    return (ms if ms >= 0 else default_ms) * 1_000_000
+
+
 class TrackingServicer(services_pb2_grpc.TrackingServiceServicer):
     def __init__(self):
         self.engine = TrackerEngine()
+
+        # Frames already older than this on arrival are skipped and counted, never
+        # tracked (see grpcStreamDetections). Read once, like every other knob.
+        self._max_age_ns = max_age_ns()
+        log.info("TRACKING_MAX_AGE_MS=%d (0 = stale-frame drop off), OPENBLAS_NUM_THREADS=%s",
+                 self._max_age_ns // 1_000_000, os.getenv("OPENBLAS_NUM_THREADS"))
 
         # Opt-in debug overlay: draw detections on the frame and imshow it.
         # Purely presentational -- the frame is fetched here and passed in.
@@ -73,7 +100,7 @@ class TrackingServicer(services_pb2_grpc.TrackingServiceServicer):
         # Client-streaming: consume detection responses until the client closes.
         # Inference reconnects on failure, so this handler runs once per stream
         # incarnation -- the gauge tracks how many are open right now.
-        frames = 0
+        frames = stale = 0
         metrics.STREAMS.inc()
         try:
             for resp in request_iterator:
@@ -89,6 +116,17 @@ class TrackingServicer(services_pb2_grpc.TrackingServiceServicer):
                     delta_ns = now_ns - resp.gTimestampNs
                     metrics.INFERENCE_MODULE_LATENCY.labels(resp.gStreamId).observe(
                         delta_ns / 1e9 if delta_ns > 0 else 0.0)
+
+                # Safety net, not the steady state: a frame already past its
+                # capture-age limit means this loop (or a stage upstream) is behind,
+                # and the frames queued after it are fresher. Skipping costs
+                # microseconds, so a backlog drains instead of growing. Same > 0
+                # guard as above: an unset stamp is never dropped. See README.md.
+                if (self._max_age_ns and resp.gCaptureTimestampNs > 0
+                        and now_ns - resp.gCaptureTimestampNs > self._max_age_ns):
+                    stale += 1
+                    metrics.STALE.labels(resp.gStreamId).inc()
+                    continue
 
                 frame = self._frames.get(resp) if self._frames else None
                 tracked = self.engine.update(resp.gStreamId, resp.gDetections,
@@ -135,7 +173,8 @@ class TrackingServicer(services_pb2_grpc.TrackingServiceServicer):
                                           str(bool(a.suppressed)).lower()).inc()
         finally:
             metrics.STREAMS.dec()
-        log.info("stream from %s ended after %d frames", context.peer(), frames)
+        log.info("stream from %s ended after %d frames (%d stale, skipped)",
+                 context.peer(), frames, stale)
         return services_pb2.grpcAck(ok=True)
 
 

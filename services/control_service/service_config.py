@@ -30,14 +30,15 @@ INFERENCE = ServiceSpec(
     name="inference", unit="edge-inference.service", compose_service="inference",
     env_file="/etc/edge-ai/inference.env",
     params=("INFERENCE_BIND", "EXECUTION_PROVIDER", "WORKER_COUNT", "BATCH_SIZE",
-            "TRACKING_ADDR", "FRAME_TRANSPORT", "TRACKING_PIXELS", "METRICS_ADDR"),
+            "TRACKING_ADDR", "FRAME_TRANSPORT", "TRACKING_PIXELS", "METRICS_ADDR",
+            "INFERENCE_MAX_AGE_MS"),
 )
 
 TRACKING = ServiceSpec(
     name="tracking", unit="edge-tracking.service", compose_service="tracking",
     env_file="/etc/edge-ai/tracking.env",
     params=("TRACKING_BIND", "TRACKING_ALGO", "FRAME_TRANSPORT", "TRACKING_PIXELS",
-            "METRICS_ADDR"),
+            "METRICS_ADDR", "TRACKING_MAX_AGE_MS", "OPENBLAS_NUM_THREADS"),
 )
 
 SERVICES = {s.name: s for s in (INGEST, INFERENCE, TRACKING)}

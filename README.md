@@ -633,6 +633,9 @@ journalctl --user -u edge-inference -f
 | `DISPLAY_PUBLISH` | `1` | tracking | Publish detections to the display feed |
 | `DISPLAY_DETECTIONS` | `0` | tracking | In-process `cv2` window — **off under systemd** (headless) |
 | `EVENT_DATA_DIR` | `<repo>/data` | tracking, display | Alerts JSON + SQLite root |
+| `INFERENCE_MAX_AGE_MS` | `40` | inference | Safety net: skip a frame already this old (capture age) when a worker takes it; `0` disables |
+| `TRACKING_MAX_AGE_MS` | `80` | tracking | Safety net: skip a frame already this old when it arrives; `0` disables |
+| `OPENBLAS_NUM_THREADS` | `1` | tracking | numpy/scipy BLAS threads. Keep `1`: idle OpenBLAS threads busy-wait (set by `run_tracker.sh`, the unit and `main.py`) |
 | `LIFECYCLE_BACKEND` | `systemd-user` | display | `systemd` / `systemd-user` / `compose` / `dryrun` |
 | `DISPLAY_FPS` | `15` | display | MJPEG cap per viewer |
 | `STARTUP_READY_TIMEOUT` | `20` | display | Seconds to wait for a port before starting its peer |

@@ -15,6 +15,7 @@
 #pragma once
 #include "detector.hpp"
 #include <onnxruntime_cxx_api.h>
+#include <mutex>
 
 // Which execution provider to register; CPU is the implicit last resort and ORT
 // falls back per-op down the list. Auto/TensorRT = TRT -> CUDA -> CPU (the
@@ -40,6 +41,13 @@ private:
     Ort::Env env_;
     Ort::Session session_{nullptr};
     Ort::SessionOptions session_options_;
+
+    // Serializes session_.Run() ONLY. The worker pool shares one session, and
+    // concurrent Run calls on a GPU provider corrupt the EP's shared device
+    // state -- observed as CUDA 716 (misaligned address) under CUDA. The GPU work was
+    // already serialized by the CUDA stream, so this costs little: preprocess,
+    // mat_to_tensor, NMS and postprocess all stay outside the lock and parallel.
+    std::mutex run_mutex_;
 
     std::vector<const char*> input_names_;
     std::vector<const char*> output_names_;

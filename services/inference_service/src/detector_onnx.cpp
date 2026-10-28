@@ -178,14 +178,20 @@ std::vector<Detection> OnnxDetector::infer(const cv::Mat& frame)
         input_shape.size()
     );
 
-    auto output_tensors = session_.Run(
-        Ort::RunOptions{nullptr},
-        input_names_.data(),
-        &input_tensor,
-        1,
-        output_names_.data(),
-        output_names_.size()
-    );
+    // Scoped so the lock covers Run() and nothing else -- see run_mutex_ in the
+    // header for why. Everything above and below this block runs concurrently.
+    std::vector<Ort::Value> output_tensors;
+    {
+        std::lock_guard<std::mutex> lock(run_mutex_);
+        output_tensors = session_.Run(
+            Ort::RunOptions{nullptr},
+            input_names_.data(),
+            &input_tensor,
+            1,
+            output_names_.data(),
+            output_names_.size()
+        );
+    }
 
     // --- EfficientNMS model: 4 outputs (num_dets, det_boxes, det_scores, det_classes).
     // NMS already ran in the engine; det_boxes are xyxy in 640 letterboxed space. We

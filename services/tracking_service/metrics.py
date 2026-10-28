@@ -23,6 +23,12 @@ DEFAULT_ADDR = "0.0.0.0:9103"
 
 FRAMES = Counter(
     "tracking_frames_total", "detection messages processed", ["stream"])
+# Safety-net drop: frames that arrived already older than TRACKING_MAX_AGE_MS and
+# were skipped unprocessed. Flat in a healthy run; a rising rate means tracking,
+# or a stage upstream of it, can't keep up. See README.md.
+STALE = Counter(
+    "tracking_frame_stale_total",
+    "frames skipped on arrival: older than TRACKING_MAX_AGE_MS (capture age)", ["stream"])
 DETECTIONS = Counter(
     "tracking_detections_received_total",
     "detections received, by retail class id "

@@ -36,6 +36,7 @@
 *pycache*
 /data
 !/rtsp_server/README.md
+commit.txt
 
 # rendered systemd env files (generated from deploy/env/*.in)
 /deploy/rendered

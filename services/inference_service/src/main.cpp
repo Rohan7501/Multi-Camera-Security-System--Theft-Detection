@@ -35,6 +35,18 @@ static int workerCount(int fallback)
     return n > 0 ? n : fallback;
 }
 
+// Safety-net capture-age limit (ms) for a frame at worker pickup, from
+// INFERENCE_MAX_AGE_MS. 0 disables the drop; unset, unparseable or negative
+// falls back to the default. See InferenceWorker::run().
+static int64_t maxFrameAgeMs(int64_t fallback)
+{
+    const char* v = std::getenv("INFERENCE_MAX_AGE_MS");
+    if (!v || !*v) return fallback;
+    char* end = nullptr;
+    const long ms = std::strtol(v, &end, 10);
+    return (end == v || ms < 0) ? fallback : ms;
+}
+
 void signal_handler(int) { running = false; }
 
 void segfault_handler(int)
@@ -52,9 +64,9 @@ int main()
     signal(SIGTERM, signal_handler);
     signal(SIGSEGV, segfault_handler);
 
-    FrameQueue<FramePacket> frame_queue(400);
+    FrameQueue<FramePacket> frame_queue(80);
 
-    OnnxDetector detector(ExecutionProvider::CUDA);
+    OnnxDetector detector(ExecutionProvider::Auto);
     detector.load_model("models/best.onnx");
 
     FrameStore* fs = createShm();
@@ -81,17 +93,19 @@ int main()
     // Worker pool: NUM_THREADS threads all popping the one shared queue. Workers
     // hold only references, so one per thread costs nothing and keeps ownership
     // obvious. They share a single detector, so infer() itself stays serialized.
-    const int num_threads = 4;
+    const int num_threads = workerCount(4);
+    const int64_t max_age_ms = maxFrameAgeMs(40);
     std::vector<std::unique_ptr<InferenceWorker>> workers;
     std::vector<std::thread> worker_threads;
     workers.reserve(num_threads);
     worker_threads.reserve(num_threads);
     for (int i = 0; i < num_threads; ++i) {
         workers.push_back(std::make_unique<InferenceWorker>(
-            frame_queue, detector, *det_writer, *reader, metrics));
+            frame_queue, detector, *det_writer, *reader, metrics, max_age_ms * 1'000'000));
         worker_threads.emplace_back(&InferenceWorker::run, workers.back().get());
     }
-    LOG_INFO("InferenceWorker pool started (" + std::to_string(num_threads) + " threads)");
+    LOG_INFO("InferenceWorker pool started (" + std::to_string(num_threads) + " threads, "
+             "INFERENCE_MAX_AGE_MS=" + std::to_string(max_age_ms) + ")");
 
     InferenceServer server(frame_queue, metrics);
     std::thread server_thread(&InferenceServer::start, &server);
