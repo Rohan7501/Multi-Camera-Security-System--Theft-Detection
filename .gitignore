@@ -43,3 +43,6 @@ commit.txt
 
 # per-machine dependency paths (template: scripts/dependencies.conf.example)
 /scripts/dependencies.conf
+
+#benchmark files
+*benchmark_pipeline.py

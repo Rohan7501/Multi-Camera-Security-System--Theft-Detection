@@ -9,6 +9,84 @@ display, control) handle tracking, alerting, the UI and fleet lifecycle.
 
 ---
 
+## Performance
+
+<!-- Measured with `tests/benchmark_pipeline.py` (see [Benchmarking](#benchmarking)) on 2026-10-28/29. -->
+
+**Setup:**
+- 8 simulated cameras at 15 fps each (120 fps in total): looped H.264 files (768×432 and 360×640)
+  served by MediaMTX.
+- Shared-memory transport and default settings, with 4 inference workers. YOLOv8 runs in FP16 through
+  ONNX Runtime's TensorRT provider.
+- The display service was running, with no viewer connected.
+
+Latency covers each frame from the ingest RTSP read until tracking and alerting are done with it.
+
+| | Laptop | Jetson Orin NX 16 GB |
+|---|---|---|
+| Hardware | i7-13700HX (24 threads), RTX 4070 Laptop 8 GB | Orin NX Super devkit, `MAXN_SUPER`, clocks not locked |
+| Software | TensorRT 10.8, ONNX Runtime 1.22, CUDA 12.8 | JetPack 6.2 (L4T R36.4.3), TensorRT 10.7, ONNX Runtime 1.24, CUDA 12.6 |
+| Measured window | 10 min | 3 min |
+| Frames tracked | 119.9 fps | 119.8 fps |
+| Frames dropped | 0.03% | 0.14% (age-based safety net) |
+
+**End-to-end latency, ms**
+
+| | mean | p50 | p90 | p99 | p99.9 | max |
+|---|---|---|---|---|---|---|
+| Laptop | 11.4 | 11.1 | 16.0 | 21.2 | 30.4 | 63.0 |
+| Jetson | 41.2 | 41.1 | 60.3 | 71.8 | 76.7 | 82.4 |
+
+**Where the time goes (mean, ms)**
+
+| Hop | Laptop | Jetson |
+|---|---|---|
+| ingest → inference (shm + gRPC) | 0.8 | 1.7 |
+| inference: queue wait + `infer()` + hop to tracking | 10.0 | 37.5 |
+| &nbsp;&nbsp;of which `infer()` | 8.2 | 26.9 |
+| tracking + alerting | 0.7 | 2.0 |
+
+**CPU and memory per service.** CPU is in % of one core. RAM is PSS, which divides shared pages (the
+shm ring, libraries) between the processes that map them, so the column adds up.
+
+| Service | Laptop CPU | Laptop RAM | Jetson CPU | Jetson RAM |
+|---|---|---|---|---|
+| ingest | 122% | 637 MiB | 126% | 445 MiB |
+| inference | 190% | 4,222 MiB | 220% | 1,637 MiB |
+| tracking | 13% | 81 MiB | 34% | 81 MiB |
+| display | 0.2% | 63 MiB | 0.5% | 57 MiB |
+| GPU memory (inference) | | 680 MiB of VRAM | | 527 MiB, in shared RAM |
+| **Total** | **325% of 2,400%** | **5,002 + 680 MiB** | **380% of 800%** | **2,220 + 527 MiB** |
+
+On the Jetson the CPU and GPU share one 16 GB pool, so 2,220 + 527 MiB is the pipeline's whole
+footprint. The 186 MiB of GPU buffers mapped into inference count only in the GPU row.
+
+**Jetson power and thermals** (INA3221 rails, via `tegrastats`)
+
+| | Load | Idle |
+|---|---|---|
+| Board input (`VDD_IN`) | 22.9 W | 5.8 W |
+| CPU + GPU + CV rail | 12.2 W | 0.5 W |
+| SoC rail | 4.7 W | 1.7 W |
+| Energy | 191 mJ per frame, 5.2 fps per W | |
+| Junction temperature (max) | 72.8 °C, still rising slowly after 3 min | 52.7 °C |
+| GPU load (GR3D) | 69% average | |
+
+Reading these numbers:
+
+- **On the Jetson, inference sets the latency.** `infer()` takes 27 of the 41 ms, and most of the rest
+  is queue wait: the 4 workers are close to saturated (queue depth 2–5).
+- **Most of inference's RAM is allocated while the TensorRT model loads**, not while frames run. That
+  is 3.1 GB of heap before the first frame on x86 and 1.1 GB on the Jetson.
+<!-- - **Laptop latency moved by about 3 ms between sessions** (means of 8–11 ms), so only compare runs
+  taken back to back. -->
+- **The measurement doesn't disturb the numbers.** In an A/B test, alternating windows with the
+  benchmark attached and detached, latency differed by no more than the windows differ among
+  themselves.
+
+The benchmark results are produced with a script which will be added shortly.
+---
+
 ## Architecture
 
 ![System architecture](System.png)
@@ -330,8 +408,11 @@ Export CUDA, cuDNN, TensorRT and onnx-runtime path to run `onnx_test`.
 Rest of the cases, where those paths are required, are handled by the scripts
 ```bash
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:path/to/CUDA/:path/to/cudnn/lib:path/to/tensorrt/lib:path/to/onnxruntime/lib
-./build/services/inference_service/onnx_test --raw models/best.onnx --nms models/best_nms.onnx --image tests/frame_666.jpg
+./build/services/inference_service/onnx_test --raw models/best.onnx --nms models/best_nms.onnx --image tests/frame_666_640x640.jpg
 ```
+
+<!-- The end-to-end benchmark, `tests/benchmark_pipeline.py`, also lives in `tests/` but is not part of
+`ctest`: it needs the GPU, the model and live cameras. See [Benchmarking](#benchmarking). -->
 
 ---
 
@@ -618,6 +699,69 @@ scripts/logs.sh inference ingest   # a subset
 journalctl --user -u edge-inference -f
 ```
 
+<!-- ---
+
+## Benchmarking
+
+`tests/benchmark_pipeline.py` measures the whole pipeline under its real workload, the cameras in
+`config.yaml`. It records an idle baseline and discards a warmup. It opens the measurement window only
+once every camera is flowing at a steady rate, and it records every frame's latency rather than
+estimating it.
+
+```bash
+python3 tests/benchmark_pipeline.py --duration 5m               # laptop / discrete GPU
+python3 tests/benchmark_pipeline.py --duration 5m --jetson      # Jetson: + temperature and power
+python3 tests/benchmark_pipeline.py --attach --duration 60      # services already running (systemd)
+NUM_THREADS=6 python3 tests/benchmark_pipeline.py               # services inherit the environment
+```
+
+By default it starts the pipeline itself through `scripts/run_*.sh` (tracking → inference → display →
+ingest) and stops it afterwards. Run it from the shell you'd use for those scripts (on the Jetson,
+with the venv on `PATH`), with the cameras already up. It refuses to start if a pipeline port is
+taken. Results go to `data/benchmarks/<timestamp>/`: `report.txt`, `results.json`, `frames.csv` (every
+frame), `timeline.csv` (per second), the raw `tegrastats`/`nvidia-smi`/`jtop` logs, and each
+service's log.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--duration` | `60` | Measurement window: `90`, `90s`, `5m`, `1h` (startup and warmup come on top) |
+| `--jetson` | off | Add temperatures, power rails, GPU/EMC load and clocks, and per-process GPU memory |
+| `--warmup` | `15` (`0` with `--attach`) | Discarded before the steady-state gate |
+| `--idle` | `5` | Idle baseline before launch, for the memory and power deltas |
+| `--interval` | `1` | Sampling interval |
+| `--attach` | off | Measure services that are already running instead of launching them |
+| `--no-display` | off | Leave the display service out |
+| `--out` | `data/benchmarks/<timestamp>` | Results directory |
+
+| Section | Numbers | Source |
+|---|---|---|
+| Latency | End-to-end and per hop: mean, p50/p90/p95/p99/p99.9, max; per camera; drift test | Every frame, from tracking's `LATENCY_TRACE` |
+| Throughput | Captured / inferred / tracked fps, every drop counter, queue depth | Prometheus counters over the window |
+| Memory, CPU | Per service: CPU, threads, RSS split into anon / file / shmem, PSS, peak, heap drift | `/proc/<pid>/status`, `smaps_rollup` |
+| GPU | Per-process and device memory, utilisation | `nvidia-smi`; `jtop` on a Jetson |
+| Jetson | Power per rail against idle, mJ/frame, FPS/W, temperature per zone, clocks | `tegrastats`, `jtop`, `nvpmodel`, sysfs |
+
+Reading the report:
+
+- **Percentiles are exact when the benchmark launched the pipeline**: tracking writes one line per
+  frame. With `--attach` they come from Prometheus buckets and are marked ESTIMATED. Around the
+  operating point the buckets are 10/25/50 ms wide, and in testing the estimates overstated p90 by
+  about 50%. For exact numbers, start tracking with `LATENCY_TRACE=<file>`; `--attach` finds the file
+  through its environment.
+- **Read the tail together with the drops.** A dropped frame has no latency sample.
+- **Pipeline footprint is PSS plus GPU memory.** RSS counts shared pages (the shm ring, the CUDA
+  libraries) in full in every process, so RSS summed across services overcounts. A leak shows up as
+  *anon drift*. On a discrete GPU the two are separate pools: system RAM plus the card's VRAM, which
+  `nvidia-smi` reports. On a Jetson both live in the same RAM. Most GPU allocations appear in no
+  process's RSS, which is why they come from `jtop`. The buffers mapped into the process (`/dmabuf:`
+  in smaps, about 186 MB for inference) also show up in PSS, so they are taken out of the PSS side
+  and counted once.
+- **Jetson clocks:** unless `sudo jetson_clocks` ran first, DVFS moves the clocks during the run, and
+  the report says so. A "still warming" line means temperatures were still rising at the end: run
+  longer for sustained numbers.
+- **One copy of each service.** gRPC sets `SO_REUSEPORT`, so a second copy of a service binds the same
+  port without an error and takes part of the traffic. `--attach` refuses to measure if it finds one. -->
+
 ---
 
 ## Configuration
@@ -636,14 +780,15 @@ journalctl --user -u edge-inference -f
 | `INFERENCE_MAX_AGE_MS` | `40` | inference | Safety net: skip a frame already this old (capture age) when a worker takes it; `0` disables |
 | `TRACKING_MAX_AGE_MS` | `80` | tracking | Safety net: skip a frame already this old when it arrives; `0` disables |
 | `OPENBLAS_NUM_THREADS` | `1` | tracking | numpy/scipy BLAS threads. Keep `1`: idle OpenBLAS threads busy-wait (set by `run_tracker.sh`, the unit and `main.py`) |
+| `NUM_THREADS` | `4` | inference | Inference worker-pool size |
+| `LATENCY_TRACE` | unset | tracking | Write one CSV line per tracked frame to this file, for the [benchmark](#benchmarking) |
 | `LIFECYCLE_BACKEND` | `systemd-user` | display | `systemd` / `systemd-user` / `compose` / `dryrun` |
 | `DISPLAY_FPS` | `15` | display | MJPEG cap per viewer |
 | `STARTUP_READY_TIMEOUT` | `20` | display | Seconds to wait for a port before starting its peer |
 
-The inference worker-pool size is a compile-time constant (`num_threads` in
-`services/inference_service/src/main.cpp`, currently `4`), not an environment variable. More workers
-raise throughput but also per-frame latency, since concurrent `Ort::Session::Run` calls contend for
-the GPU — read `rate(inference_frames_total[1m])` alongside the latency percentiles, not either alone.
+More inference workers (`NUM_THREADS`) raise throughput but also per-frame latency, since
+concurrent `Ort::Session::Run` calls contend for the GPU — read `rate(inference_frames_total[1m])`
+alongside the latency percentiles, not either alone.
 
 ---
 

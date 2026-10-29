@@ -96,6 +96,14 @@ class TrackingServicer(services_pb2_grpc.TrackingServiceServicer):
             self._publisher = DetectionPublisher()
             log.info("DISPLAY_PUBLISH=1: publishing detections to %s", self._publisher.dir)
 
+        # Per-frame latency trace for tests/benchmark_pipeline.py: exact
+        # percentiles and the per-hop split. Off unless LATENCY_TRACE names a file.
+        self._trace = None
+        if os.getenv("LATENCY_TRACE"):
+            from latency_trace import LatencyTrace
+            self._trace = LatencyTrace(os.environ["LATENCY_TRACE"])
+            log.info("LATENCY_TRACE=%s: one line per tracked frame", self._trace.path)
+
     def grpcStreamDetections(self, request_iterator, context):
         # Client-streaming: consume detection responses until the client closes.
         # Inference reconnects on failure, so this handler runs once per stream
@@ -111,9 +119,9 @@ class TrackingServicer(services_pb2_grpc.TrackingServiceServicer):
                 # is the same clock C++ steady_clock uses, so the epochs line up
                 # on this box. Guard on > 0: proto3 omits a 0 default and an
                 # unset stamp would read as time-since-boot. See README.md.
-                now_ns = time.monotonic_ns()
+                rx_ns = time.monotonic_ns()
                 if resp.gTimestampNs > 0:
-                    delta_ns = now_ns - resp.gTimestampNs
+                    delta_ns = rx_ns - resp.gTimestampNs
                     metrics.INFERENCE_MODULE_LATENCY.labels(resp.gStreamId).observe(
                         delta_ns / 1e9 if delta_ns > 0 else 0.0)
 
@@ -123,7 +131,7 @@ class TrackingServicer(services_pb2_grpc.TrackingServiceServicer):
                 # microseconds, so a backlog drains instead of growing. Same > 0
                 # guard as above: an unset stamp is never dropped. See README.md.
                 if (self._max_age_ns and resp.gCaptureTimestampNs > 0
-                        and now_ns - resp.gCaptureTimestampNs > self._max_age_ns):
+                        and rx_ns - resp.gCaptureTimestampNs > self._max_age_ns):
                     stale += 1
                     metrics.STALE.labels(resp.gStreamId).inc()
                     continue
@@ -152,6 +160,9 @@ class TrackingServicer(services_pb2_grpc.TrackingServiceServicer):
                     metrics.PIPELINE_FRAME_AGE.labels(resp.gStreamId).observe(
                         age_ns / 1e9 if age_ns > 0 else 0.0)                
                 
+                if self._trace is not None:
+                    self._trace.record(resp, rx_ns, now_ns)
+
                 if self._publisher is not None:
                     self._publisher.publish(resp.gStreamId, resp.gFrameId,
                                             resp.gTimestampNs, tracked)
